@@ -1,4 +1,4 @@
-module rss_detector
+module github.com/CrimsonKarma44/rss_detector
 
 go 1.26.5
 
