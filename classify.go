@@ -214,6 +214,9 @@ func challengeReason(body []byte) string {
 		{"cf-challenge", "cloudflare challenge"},
 		{"_cf_chl", "cloudflare challenge"},
 		{"enable javascript and cookies to continue", "javascript challenge"},
+		{"google.com/sorry", "google sorry interstitial"},
+		{"/sorry/index", "google sorry interstitial"},
+		{"unusual traffic from your computer network", "google unusual traffic"},
 	}
 	for _, p := range patterns {
 		if strings.Contains(lower, p.sub) {

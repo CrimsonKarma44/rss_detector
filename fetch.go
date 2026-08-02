@@ -60,6 +60,16 @@ func (c *Client) fetchURL(ctx context.Context, rawURL string) (*FetchResult, err
 			return nil, lastErr
 		}
 
+		// Google bot interstitial (common for YouTube) — do not burn retries.
+		if isGoogleSorryURL(res.URL) || isGoogleSorryBody(res.Body) {
+			return nil, &RateLimitError{
+				StatusCode:  res.StatusCode,
+				URL:         res.URL,
+				Attempt:     attempt,
+				MaxAttempts: maxAttempts,
+			}
+		}
+
 		// Classify blocks / rate limits from status + body.
 		class := ClassifyResponse(res.ContentType, res.StatusCode, res.Body)
 
@@ -71,6 +81,11 @@ func (c *Client) fetchURL(ctx context.Context, rawURL string) (*FetchResult, err
 				URL:         res.URL,
 				Attempt:     attempt,
 				MaxAttempts: maxAttempts,
+			}
+			// Google/YouTube 429 rarely recovers within our short backoff; fail fast
+			// when redirected to sorry or after first 429 on youtube hosts.
+			if isGoogleSorryURL(res.URL) || isYouTubeHostStr(hostOf(res.URL)) || attempt >= maxAttempts {
+				return nil, lastErr
 			}
 			if attempt < maxAttempts {
 				if err := c.sleepBackoff(ctx, attempt, ra); err != nil {
@@ -122,8 +137,14 @@ func (c *Client) doOnce(ctx context.Context, rawURL string) (*FetchResult, error
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", c.userAgent)
+	ua := c.userAgent
+	// YouTube is aggressive toward non-browser UAs on /watch; use a browser-like UA there.
+	if isYouTubeHostStr(hostOf(rawURL)) && (strings.Contains(ua, "rssdetector") || ua == "") {
+		ua = "Mozilla/5.0 (compatible; rssdetector/1.0; +https://github.com/CrimsonKarma44/rss_detector) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	}
+	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml, application/xml;q=0.9, application/rss+xml;q=0.8, application/atom+xml;q=0.8, application/feed+json;q=0.7, */*;q=0.5")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -223,6 +244,30 @@ func hostOf(raw string) string {
 		return strings.ToLower(rest)
 	}
 	return ""
+}
+
+func isGoogleSorryURL(raw string) bool {
+	h := hostOf(raw)
+	return (h == "www.google.com" || h == "google.com") && strings.Contains(raw, "/sorry")
+}
+
+func isGoogleSorryBody(body []byte) bool {
+	if len(body) == 0 {
+		return false
+	}
+	// Keep scan small
+	n := len(body)
+	if n > 4096 {
+		n = 4096
+	}
+	s := strings.ToLower(string(body[:n]))
+	return strings.Contains(s, "google.com/sorry") ||
+		strings.Contains(s, "/sorry/index") ||
+		(strings.Contains(s, "our systems have detected unusual traffic") && strings.Contains(s, "google"))
+}
+
+func isYouTubeHostStr(host string) bool {
+	return IsYouTubeHost(host)
 }
 
 func isRetriableNet(err error) bool {

@@ -63,16 +63,9 @@ func (c *Client) DetectResult(ctx context.Context, rawURL string) (*Result, erro
 			}
 			if len(found) > 0 {
 				links = append(links, found...)
-				// YouTube-style handlers often fully resolve; still allow HTML merge
-				// but for youtube we can return early if high confidence.
+				// YouTube-style handlers fully resolve feed URLs from IDs; return early
+				// without a second confirm fetch (watch pages / feeds are often rate-limited).
 				if h.Name() == "youtube" {
-					links = dedupeAndRank(links)
-					if c.confirmFeedLinks {
-						// YouTube constructed URLs are well-known; light confirm optional
-						confirmed, warns := c.ConfirmFeedLinks(ctx, links, false)
-						result.Warnings = append(result.Warnings, warns...)
-						links = confirmed
-					}
 					result.Feeds = dedupeAndRank(links)
 					if len(result.Feeds) == 0 {
 						return result, ErrNoFeeds

@@ -2,6 +2,7 @@ package rssdetector
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -122,6 +123,97 @@ func TestYouTubeNoInvent(t *testing.T) {
 	}
 	if len(links) != 0 {
 		t.Fatalf("should not invent: %+v", links)
+	}
+}
+
+func TestYouTubeVideoIDParse(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"https://www.youtube.com/watch?v=zZ5-KVDIaPg", "zZ5-KVDIaPg"},
+		{"https://youtu.be/zZ5-KVDIaPg", "zZ5-KVDIaPg"},
+		{"https://www.youtube.com/shorts/zZ5-KVDIaPg", "zZ5-KVDIaPg"},
+		{"https://www.youtube.com/embed/zZ5-KVDIaPg", "zZ5-KVDIaPg"},
+		{"https://www.youtube.com/watch?v=zZ5-KVDIaPg&list=PLxxxx", "zZ5-KVDIaPg"},
+		{"https://www.youtube.com/@handle", ""},
+	}
+	for _, tt := range tests {
+		u, err := url.Parse(tt.in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := youtubeVideoID(u); got != tt.want {
+			t.Errorf("youtubeVideoID(%q)=%q want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestYouTubeWatchViaInnertube(t *testing.T) {
+	// Mock Innertube player JSON with videoDetails.channelId
+	playerJSON := `{"videoDetails":{"videoId":"zZ5-KVDIaPg","title":"Haskell is DONE","channelId":"UCUyeluBRhGPCW4rPe_UvBZQ","author":"The PrimeTime"}}`
+	c := New(
+		WithHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "/youtubei/v1/player") {
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(playerJSON)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Request:    req,
+				}, nil
+			}
+			// If watch HTML is requested, simulate Google rate limit — must not be needed.
+			return &http.Response{
+				StatusCode: 429,
+				Body:       io.NopCloser(strings.NewReader("sorry")),
+				Header:     http.Header{},
+				Request:    req,
+			}, nil
+		})}),
+		WithRetry(RetryConfig{MaxAttempts: 1}),
+		WithConfirmFeedLinks(false),
+		WithPlatformHandlers(true),
+	)
+	h := youtubeHandler{}
+	u, _ := url.Parse("https://www.youtube.com/watch?v=zZ5-KVDIaPg")
+	links, err := h.Discover(context.Background(), c, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("links=%+v", links)
+	}
+	want := "https://www.youtube.com/feeds/videos.xml?channel_id=UCUyeluBRhGPCW4rPe_UvBZQ"
+	if links[0].URL != want {
+		t.Fatalf("got %s", links[0].URL)
+	}
+}
+
+func TestYouTubeWatchDetectEndToEndMock(t *testing.T) {
+	playerJSON := `{"videoDetails":{"videoId":"abc","channelId":"UCuAXFkgsw1L7xaCfnd5JJOw"}}`
+	c := New(
+		WithHTTPClient(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if strings.Contains(req.URL.Path, "/youtubei/v1/player") {
+				return &http.Response{
+					StatusCode: 200,
+					Body:       io.NopCloser(strings.NewReader(playerJSON)),
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Request:    req,
+				}, nil
+			}
+			t.Fatalf("unexpected request: %s %s", req.Method, req.URL)
+			return nil, nil
+		})}),
+		WithRetry(RetryConfig{MaxAttempts: 1}),
+		WithConfirmFeedLinks(true), // must still skip confirm for youtube early return
+		WithPlatformHandlers(true),
+		WithProbeCommonPaths(false),
+	)
+	links, err := c.Detect(context.Background(), "https://www.youtube.com/watch?v=zZ5-KVDIaPg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || !strings.Contains(links[0].URL, "UCuAXFkgsw1L7xaCfnd5JJOw") {
+		t.Fatalf("%+v", links)
 	}
 }
 
