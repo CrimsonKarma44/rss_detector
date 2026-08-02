@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Sample Atom</title>
+  <link href="https://example.com/"/>
+  <id>https://example.com/</id>
+  <entry>
+    <title>Hello</title>
+    <id>https://example.com/1</id>
+  </entry>
+</feed>
